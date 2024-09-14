@@ -9,7 +9,7 @@
 
 # 分支说明
 
-您目前正在：**backend Python分支**
+您目前正在：**backend Golang分支**
 
 # News
 
