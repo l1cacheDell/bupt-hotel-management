@@ -1,55 +1,51 @@
 # bupt hotel management system
-A hotel management system, Software Engineering, for bupt 2023 autumn course design.
+波普特廉价酒店管理系统，北京邮电大学2023年秋季-软件工程-课程设计。
 
-# Project structure & planning
-+ backend: Python flask, for faster developing.
-+ **[new]**: Golang Gin + GORM, no bug && better scheduler
-+ frontend: Vue, css, Javascript. `bootstrap` will be used for boosting the page structing.
+> 用心做好一件事。
 
-Notice that we will build a front-backend split system, communicating with standard API.
+> 在软件开发的生命周期中，软件维护才是耗时最多的环节。
 
+这虽然是2023年秋季的软件工程课程设计，但是至今仍在维护，我看到了有很多后人star这个仓库，说明它还在发挥它的作用。维护这个仓库，做好一份代码，是一件很有意义的事情。
 
+# 分支说明
 
-# Stack
+您目前正在：**backend Python分支**
+
+# News
+
++ [2024-09-14] 计划重写Python后端，舍弃旧的Flask + pymysql框架，选用FastAPI + Asyncio + aiosqlite.
++ [2024-04-11] 新增golang后端，对协程提供更好的支持。
++ [2023-12-17] 完成Python后端的搭建，完成基于Vue的前端的初步搭建。
+
+# 技术栈详情
 + Vue3 (axios, element-plus)
 + Python backend: Flask + pymysql
-+ **Golang backend: Gin + GORM**
++ Golang backend: Gin + GORM
 
+# 任务分析
 
+波普特酒店管理系统这个任务，本质上是一个IO bound的系统，也就是说可能系统的bottleneck大多数都在IO上面（与数据库进行IO）.既然是一个IO Bound的task，一门支持协程的语言是很有必要的。
+
+协程本质上的思想，就是在一个coroutine挂起的时候，去执行另一个协程。比如：
+
++ A协程遇到了网络请求IO，或者数据库IO（等待其他人完成工作，自己只是在等待）
++ 这个时候，我们会选择把A协程挂起。因为这是无意义的等待，这个等待时间我们完全可以执行其他事情。
++ 挂起A协程，执行B协程
++ 等A协程完成了IO，我们再执行A协程后续的代码段
+
+这就是协程最基本的思想，通过挂起IO等待中的协程，计算其他协程的任务，以提高整个系统的并发量，从而提高请求的吞吐量。
 
 ---
 
-# 2023-12.07 update
-上面的都是在画饼放屁，这里才是真话。
 
-前端写得一坨屎，我自己主导负责的，主打一个能跑就行，部分工程架构**或许**有参考价值。
+__旧版Python后端存在的问题__
 
-后端才是我们项目的重点，考虑空调管理系统的需求背景，我们实现了调度算法，包括：
-
-+ 时间片调度
-+ 风速优先级
-
-这两个调度算法的implement就是后端的**价值所在**。
+后端与数据库的交互部分时不时会崩掉，原因未知，但是大多数时候是能跑的。（不清楚到底是网络的问题还是电脑与MySQL Connection的问题还是代码的问题，不过从报错信息上来看似乎是使用连接的方式有问题，后人可以完善一下连接池的处理）
 
 
 
-__已知存在的问题__
 
-后端与数据库的交互部分时不时会崩掉，原因未知，但是大多数时候是能跑的。（不清楚到底是他妈网络的问题还是电脑与MySQL Connection的问题还是他妈的代码的问题，不过从报错信息上来看似乎是使用连接的方式有问题，后人可以完善一下连接池的处理）
-
-
-
-# 2024-04-11 update
-
-朝花夕拾，我自己重新写了一遍后端的代码。使用的语言是Golang，框架是Gin + GORM
-
-一方面，更加清晰、完善的提供给了大家scheduler的逻辑与思路。
-
-另一方面是不存在bug，及时存在也能快速定位，比Python版本的屎山好多了。
-
-
-
-# 如何启动？
+# 如何启动
 
 ## 1. Python backend
 
