@@ -11,9 +11,15 @@
 
 您目前正在：**backend Python分支**
 
+Dependency:
+
+```bash
+pip install tortoise-orm aiosqlite fastapi uvicorn
+```
+
 # News
 
-+ [2024-09-14] 计划重写Python后端，舍弃旧的Flask + pymysql框架，选用FastAPI + Asyncio + aiosqlite.
++ [2024-09-14] 计划重写Python后端，舍弃旧的Flask + pymysql框架，选用FastAPI + asyncio + Tortoise ORM & aiosqlite.
 + [2024-04-11] 新增golang后端，对协程提供更好的支持。
 + [2023-12-17] 完成Python后端的搭建，完成基于Vue的前端的初步搭建。
 
