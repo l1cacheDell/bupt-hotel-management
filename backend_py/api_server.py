@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 import uvicorn
 import asyncio
+import threading
+from loguru import logger
 
 # ==================== User Defined Modules ==================
 from request_model import (
@@ -14,11 +16,36 @@ from request_model import (
     QueryRoomInfoRequest
 )
 
+from sql_utils import (
+    init_db,
+    close_db
+)
+
+from scheduler import (
+    ScheduleTask,
+    scheduler_thread_func,
+    add_task_to_queue,
+    stop_event
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    
-    yield
+    await init_db()
+    sche_thread = threading.Thread(target=scheduler_thread_func)
+    sche_thread.start()
+    logger.info("Scheduler thread started.")
+    try:
+        yield
+    finally:
+        stop_event.set()
+        sche_thread.join()
+        logger.info("Scheduler thread stopped.")
+
+        await close_db()
+
+        logger.info("DB connection closed.")
+        logger.info("Server stopped gracefully.")
     
 
 
@@ -29,42 +56,42 @@ app = FastAPI(lifespan=lifespan)
 
 @app.post("/api/checkin")
 async def checkin(request: CheckinRequest):
-    pass
+    # checkin 并不一定要开空调
     return {"status": "OK"}
 
 @app.post("/api/checkout")
 async def checkout(request: CheckoutRequest):
-    pass
+    # checkout 一定要检查关空调
     return {"status": "OK"}
 
 @app.post("/api/turn_on")
 async def turn_on(request: TurnOnRequest):
-    pass
+    # 开空调
     return {"status": "OK"}
 
 @app.post("/api/turn_off")
 async def turn_off(request: TurnOffRequest):
-    pass
+    # 关空调
     return {"status": "OK"}
 
 @app.post("/api/set_temperature")
 async def set_temperature(request: SetTemperatureRequest):
-    pass
+    # 设置温度
     return {"status": "OK"}
 
 @app.post("/api/set_speed")
 async def set_speed(request: SetSpeedRequest):
-    pass
+    # 设置空调速度
     return {"status": "OK"}
 
 @app.get("/api/query_room_info")
 async def query_room_info(request: QueryRoomInfoRequest):
-    pass
+    # 直接访问db
     return {"status": "OK"}
 
 @app.get("/api/query_schedule")
 async def query_schedule():
-    pass
+    # 直接访问RoomServe
     return {"status": "OK"}
 
 

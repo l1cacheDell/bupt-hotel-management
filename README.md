@@ -14,6 +14,13 @@
 Dependency:
 
 ```bash
+python -m venv hotel_venv
+
+# windows
+./hotel_venv/Scripts/activate
+# linux/macos
+source hotel_venv/bin/activate
+
 pip install tortoise-orm aiosqlite fastapi uvicorn
 ```
 
@@ -152,13 +159,25 @@ SchduleTask结构体内部的成员：
 + op_type：操作类型，有`temperature`和`speed`两种。
 + op_value：操作值，如果是`temperature`，则值就是用户新设置的温度值，为了统一，在这里以字符串传递。如果是`speed`，那么值就是`high`, `medium`, `low`中的一个。
 
+
+
+两个线程讲解：
+
 + 主线程：负责接收来自外部的请求，这些请求全部都化为`ScheduleTask`对象，放入`task_queue`中。**不允许来自FastAPI的请求直接对数据库进行IO操作，因为这样没有经过schedule，会导致进入未知的状态。**
-+ Scheduler线程：有一个时间tick，每隔一段时间tick，就会调用`step()`方法。
++ Scheduler线程：有一个`need_step()`方法，判断是否需要进行step，如果返回true，就会调用`step()`方法。
     + `step()`方法首先会先锁住`task_queue`，不允许主线程继续往这个里面添加任务，相当于阻塞住。
     + 然后自己从`task_queue`中把所有的`ScheduleTask`对象取出来，更新RoomServe哈希表，把每个房间需要更改的地方更改了。同时把**改变温度**的ScheduleTask转换一下，放到`DBQueue`中。
     + 然后解锁对`task_queue`的占有状态，允许主线程往里面添加task。避免长时间阻塞主线程。
     + 现在状态已经更新了，那么就开始调度Scheduler，以风速为优先级，更新`serving_queue`和`waiting_queue`。从`serving_queue`里面退出来的`schedule_item`，全都记录上结束时间，然后把这个schedule_item转化一下，放入`DBQueue`中。
     + 最后再进行持久化操作：把`DBQueue`中的数据依次pop出来，写入数据库，清空`DBQueue`。
+
+
+
+决定是否`step()`的关键是：是否有需要时间片的需求，如果有，则step，如果没有，就不需要step了。因为你不能保证所有操作都能在一个tick内执行完，你也不能保证tick到了之后，step的调用是否会堆积。
+
+设置两个queue的长度为3和2，因为这是验收时候的标准。
+
+
 
 __案例__
 

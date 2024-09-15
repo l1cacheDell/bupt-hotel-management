@@ -159,5 +159,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-backend_go/src/backend_go
-backend_go/src/hotel.db
+# venv
+hotel_venv/
