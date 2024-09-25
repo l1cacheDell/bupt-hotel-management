@@ -13,6 +13,8 @@ from scheduler.schedule_struct import (
     ScheduleTask
 )
 
+from server_config import bupt_hotel_config
+
 # ============= 多线程都会访问的全局变量 ==============
 schedule_task_queue: Deque[ScheduleTask] = deque([])
 task_queue_lock = threading.Lock()
@@ -21,23 +23,26 @@ stop_event = threading.Event()
 
 # ============= 本线程内访问的变量 ================
 # 我们在联调验收的时候，设置服务队列为3，等待队列为2，所以在这里就先行设置队列长度了。如果后续情况有变，可自行更改
-serving_queue: Deque[ScheduleItem] = deque([], maxlen=3)
-waiting_queue: Deque[ScheduleItem] = deque([], maxlen=2)
+serving_queue_size = int(bupt_hotel_config.room_per_layer * 0.6)
+serving_queue: Deque[ScheduleItem] = deque([], maxlen=serving_queue_size)
+
+waiting_queue_size = bupt_hotel_config.room_per_layer - serving_queue_size
+waiting_queue: Deque[ScheduleItem] = deque([], maxlen=waiting_queue_size)
 
 # 在step()的后面，决定要入库的消息都放到db_queue中
 db_queue: Deque[DBQueueItem] = deque([])
 
-# 定义全局变量 RoomServe，key是房间号，value是一个字典，记录房间的风速、温度，这个value的长度只能为2.
-RoomServe: Dict[str, Dict[str, str]] = {}
+# 定义全局变量 RoomServe，key是房间号，value是一个字典，记录房间的风速、温度，这个value字典的长度只能为2.
+ServedRooms: Dict[str, Dict[str, str]] = {}
 
 # ====================================================
 
 def initialize_room_serve():
-    global RoomServe
+    global ServedRooms
     # 此处我们联合验收的时候，假设一共有5层楼，每一层楼5个房间，也就是101-105, 501-505
-    for i in range(1, 6):
-        for j in range(1, 6):
-            RoomServe[f"{i}0{j}"] = {}  # 先置为空
+    for i in range(1, bupt_hotel_config.hotel_layers + 1):
+        for j in range(1, bupt_hotel_config.room_per_layer + 1):
+            ServedRooms[f"{i}0{j}"] = {"temperature": 26, "speed": "medium"}  # 先置为初始默认状态
 
 # wrapper function, 避免主线程直接操作schedule_task_queue
 def add_task_to_queue(task: ScheduleTask):
@@ -50,10 +55,12 @@ def need_step() -> bool:
     另一方面是避免CPU过于繁忙，或者CPU过于空闲，如果需要step的话，上一次step完了继续step下一次就行，没必要非要等满一秒钟才继续执行。
 
     相当于，之前的程序模型是:
-    1 - 1 - 1 - 1 - 1 - 1 每隔一秒钟迭代一次， 但是容易出问题。（比如step没法在一秒钟之内完成，下一次的step信号又来了）
-    现在的程序模型是：
-    0.52 - 0.96 - 1.3 - 0.2 - 1.01 - 0.45 - 0.63 不定时迭代，只要需要进行step，那就立即step，好处就是不会积压任务，因为只有上一次完成了下一次
-    才会开始。坏处可能就是会导致送风不是那么规律，但是是可以接受的。
+        1 - 1 - 1 - 1 - 1 - 1 
+        每隔一秒钟迭代一次， 但是容易出问题。（比如step没法在一秒钟之内完成，下一次的step信号又来了）
+    现在的程序模型是:
+        0.52 - 0.96 - 1.3 - 0.2 - 1.01 - 0.45 - 0.63 
+        不定时迭代，只要需要进行step，那就立即step，好处就是不会积压任务，因为只有上一次完成了下一次才会开始。坏处可能就是会导致送风不是那
+        么规律，但是是可以接受的。
     """
     global serving_queue, waiting_queue, db_queue
     return True

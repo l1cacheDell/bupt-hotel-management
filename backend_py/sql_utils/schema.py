@@ -8,7 +8,7 @@ class User(Model):
     room_number = fields.ForeignKeyField('models.Room', related_name='users')
     check_in_time = fields.DatetimeField(auto_now_add=True)
     check_out_time = fields.DatetimeField(null=True)
-    bill = fields.FloatField()
+    bill = fields.FloatField(null=True)
 
 class Room(Model):
     room_number = fields.IntField(pk=True)

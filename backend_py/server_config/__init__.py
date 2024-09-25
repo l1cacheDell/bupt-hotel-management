@@ -1,0 +1,1 @@
+from server_config.config import bupt_hotel_config

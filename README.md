@@ -26,9 +26,9 @@ pip install tortoise-orm aiosqlite fastapi uvicorn
 
 # News
 
-+ [2024-09-14] 计划重写Python后端，舍弃旧的Flask + pymysql框架，选用FastAPI + asyncio + Tortoise ORM & aiosqlite.
-+ [2024-04-11] 新增golang后端，对协程提供更好的支持。
-+ [2023-12-17] 完成Python后端的搭建，完成基于Vue的前端的初步搭建。
++ **[2024-09-14]** 计划重写Python后端，舍弃旧的Flask + pymysql框架，选用FastAPI + asyncio + Tortoise ORM & aiosqlite.
++ **[2024-04-11]** 新增golang后端，对协程提供更好的支持。
++ **[2023-12-17]** 完成Python后端的搭建，完成基于Vue的前端的初步搭建。
 
 # 技术栈详情
 + Vue3 (axios, element-plus)
@@ -92,7 +92,7 @@ __一、用户表__
 |  client_name   |  string  |                           用户名字                           |
 |   client_id    |  string  |                         用户身份证号                         |
 |  room_number   |   int    | 用户房间号（注意这个房间号不是用户自己选择的，而是系统分配的，毕竟没有人在入住的时候可以选择到底是哪个号码）（同时这个也是一个**foreign key**） |
-| check_in_time  | datetime |                         用户入住时间                         |
+| check_in_time  | datetime |                   用户入住时间（自动写入）                   |
 | check_out_time | datetime |                         用户离开时间                         |
 |      bill      |  float   |                           用户账单                           |
 
@@ -135,64 +135,101 @@ __三、详单表__
 
 这个表格有两个操作来源：第一个是用户自己的行为（调整风速之类的），第二个是后端的行为：时间片调度，会不停地对这个表格新增记录进来。
 
-## 4. 调度设计：Scheduler的数据结构
-我们维护一个scheduler，这个scheduler负责迭代。同时这个scheduler运行在另一个线程中。
+## 4. 调度设计：Scheduler内部的数据结构
+我们维护一个scheduler，这个scheduler负责迭代每一步的`step`。同时这个scheduler运行在另一个线程中。
 
-Scheduler内部会动态维护几个数据结构：
+scheduler内部会动态维护几个数据结构：
 
-+ RoomServe哈希表，`key`是房间号，`value`是一个字典：房间的风速：`high`, `medium`, `low`三种状态。房间的温度：浮点数。
-+ serving_queue：当前轮到**应该提供送风**的房间队列
-+ waiting_queue：当前**等待送风**的房间队列
-+ DBQueue：是一个自己用的小型queue。用来存放需要更新的房间信息。
-
-serving_queue和waiting_queue中存放的，是结构体`schedule_item`。
-
-schedule_item:
-
-+ room_number：房间号
-+ start_time：开始时间
-+ end_time: 结束时间
-+ speed：房间风速
-
-DBQueue中存放的，是结构体db_queue_item。
-
-db_queue_item:
-
-+ room_number：房间号
-+ op_type：操作类型，有`temperature`和`speed`两种。
-+ op_value：操作值，如果是`temperature`，则值就是用户新设置的温度值，为了统一，在这里以字符串传递。如果是`speed`，那么值就是`high`, `medium`, `low`中的一个。
-+ start_time：开始时间
-+ end_time: 结束时间
+| 被维护的Data Structure |                             说明                             |
+| :--------------------: | :----------------------------------------------------------: |
+|     `ServedRooms`      | 哈希表，`key`是房间号，`value`是一个字典：房间的风速：`high`, `medium`, `low`三种状态。房间的温度：浮点数。 |
+|    `serving_queue`     |              当前轮到**应该提供送风**的房间队列              |
+|    `waiting_queue`     |                  当前**等待送风**的房间队列                  |
+|       `db_queue`       |    是一个自己用的小型queue。用来存放需要更新的房间信息。     |
 
 
 
-## 5. 调度算法：Scheduler的调度设计
+---
 
-一共有两个线程，一个是主线程，另一个是Scheduler线程。
 
-SchduleTask结构体内部的成员：
 
-+ room_number：房间号
-+ op_type：操作类型，有`temperature`和`speed`两种。
-+ op_value：操作值，如果是`temperature`，则值就是用户新设置的温度值，为了统一，在这里以字符串传递。如果是`speed`，那么值就是`high`, `medium`, `low`中的一个。
+`serving_queue`和`waiting_queue`中存放、流动的，是结构体`ScheduleItem`。
+
+`ScheduleItem`的定义如下:
+
+|  结构体成员   |   说明   |
+| :-----------: | :------: |
+| `room_number` |  房间号  |
+| `start_time`  | 开始时间 |
+|  `end_time`   | 结束时间 |
+|    `speed`    | 房间风速 |
+
+
+
+---
+
+
+
+`db_queue`中存放的，是结构体`DBQueueItem`。
+
+`DBQueueItem`的定义如下:
+
+|  结构体成员   |                             说明                             |
+| :-----------: | :----------------------------------------------------------: |
+| `room_number` |                            房间号                            |
+|   `op_type`   |           操作类型，有`temperature`和`speed`两种。           |
+|  `op_value`   | 操作值，如果是`temperature`，则值就是用户新设置的温度值，为了统一，在这里以字符串传递。如果是`speed`，那么值就是`high`, `medium`, `low`中的一个。 |
+| `start_time`  |                           开始时间                           |
+|  `end_time`   |                           结束时间                           |
+
+
+
+## 5. 调度算法：Scheduler的调度算法设计
+
+我们整个程序一共有两个线程，一个是主线程，另一个是Scheduler线程。
+
+在启动程序的时候，这两个线程会同步启动。这两个线程的沟通，通过一个全局变量`schedule_task_queue`来进行。
+
+具体来说，主线程接受外部请求，自己进行封装、处理、转化为一个`SchedulerTask`结构体，放入这个`schedule_task_queue`中。
+
+为了避免主线程直接访问，做了个wrapper function：
+
+```python
+# wrapper function, 避免主线程直接操作schedule_task_queue
+def add_task_to_queue(task: ScheduleTask):
+    with task_queue_lock:  # 加锁
+        schedule_task_queue.append(task)  # 添加任务到队列
+```
+
+
+
+介绍一下`SchduleTask`结构体内部的成员：
+
+|  结构体成员   |                             说明                             |
+| :-----------: | :----------------------------------------------------------: |
+| `room_number` |                            房间号                            |
+|   `op_type`   |           操作类型，有`temperature`和`speed`两种。           |
+|  `op_value`   | 操作值，如果是`temperature`，则值就是用户新设置的温度值，为了统一，在这里以字符串传递。如果是`speed`，那么值就是`high`, `medium`, `low`中的一个。 |
+
+
 
 
 
 两个线程讲解：
 
-+ 主线程：负责接收来自外部的请求，这些请求全部都化为`ScheduleTask`对象，放入`task_queue`中。**不允许来自FastAPI的请求直接对数据库进行IO操作，因为这样没有经过schedule，会导致进入未知的状态。**
++ 主线程：负责接收来自外部的请求，这些请求全部都化为`ScheduleTask`对象，放入`schedule_task_queue`中。**不允许来自FastAPI的请求（也就是主线程）直接对数据库进行IO操作，因为这样没有经过schedule，会导致进入未知的状态。**
 + Scheduler线程：有一个`need_step()`方法，判断是否需要进行step，如果返回true，就会调用`step()`方法。
     + `step()`方法首先会先锁住`task_queue`，不允许主线程继续往这个里面添加任务，相当于阻塞住。
-    + 然后自己从`task_queue`中把所有的`ScheduleTask`对象取出来，更新RoomServe哈希表，把每个房间需要更改的地方更改了。同时把**改变温度**的ScheduleTask转换一下，放到`DBQueue`中。
+    + 然后自己从`task_queue`中把所有的`ScheduleTask`对象取出来，更新`ServedRooms`哈希表，把每个房间需要更改的地方更改了。同时把**改变温度**的`ScheduleTask`转换一下，放到`db_queue`中。
     + 然后解锁对`task_queue`的占有状态，允许主线程往里面添加task。避免长时间阻塞主线程。
-    + 现在状态已经更新了，那么就开始调度Scheduler，以风速为优先级，更新`serving_queue`和`waiting_queue`。从`serving_queue`里面退出来的`schedule_item`，全都记录上结束时间，然后把这个schedule_item转化一下，放入`DBQueue`中。
-    + 最后再进行持久化操作：把`DBQueue`中的数据依次pop出来，写入数据库，清空`DBQueue`。
+    + 现在状态已经更新了，那么就开始调度`Scheduler`，以风速为优先级，更新`serving_queue`和`waiting_queue`。从`serving_queue`里面`pop`出来的`schedule_item`，全都记录上结束时间，然后把这个schedule_item转化一下，放入`db_queue`中。
+    + 最后再进行持久化操作：把`db_queue`中的数据依次pop出来，写入数据库，保证最终清空`db_queue`。
 
 
 
 决定是否`step()`的关键是：是否有需要时间片的需求，如果有，则step，如果没有，就不需要step了。因为你不能保证所有操作都能在一个tick内执行完，你也不能保证tick到了之后，step的调用是否会堆积。
 
-设置两个queue的长度为3和2，因为这是验收时候的标准。
+> 设置两个queue的长度为3和2，因为这是验收时候的标准。
 
 
 
@@ -205,9 +242,6 @@ __案例__
 ---
 
 
-__旧版Python后端存在的问题__
-
-后端与数据库的交互部分时不时会崩掉，原因未知，但是大多数时候是能跑的。（不清楚到底是网络的问题还是电脑与MySQL Connection的问题还是代码的问题，不过从报错信息上来看似乎是使用连接的方式有问题，后人可以完善一下连接池的处理）
 
 
 
