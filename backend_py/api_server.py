@@ -6,7 +6,7 @@ import threading
 from loguru import logger
 
 # ==================== User Defined Modules ==================
-from request_model import (
+from server_utils import (
     CheckinRequest,
     CheckoutRequest,
     TurnOnRequest,

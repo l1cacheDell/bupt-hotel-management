@@ -161,3 +161,8 @@ cython_debug/
 
 # venv
 hotel_venv/
+
+# db files
+backend_py/hotel_management.db
+backend_py/hotel_management.db-shm
+backend_py/hotel_management.db-wal
