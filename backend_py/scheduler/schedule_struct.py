@@ -16,5 +16,5 @@ class DBQueueItem(BaseModel):
 
 class ScheduleTask(BaseModel):
     room_number: int
-    op_type: str    # temperature, speed
+    op_type: str    # temperature, speed, off
     op_value: str   # [new_temperatue] or [high, medium, low]

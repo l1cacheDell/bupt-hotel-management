@@ -15,6 +15,10 @@ from scheduler.schedule_struct import (
 
 from server_config import bupt_hotel_config
 
+from scheduler.schedule_cache import ScheduleCache
+
+from loguru import logger
+
 # ============= 多线程都会访问的全局变量 ==============
 schedule_task_queue: Deque[ScheduleTask] = deque([])
 task_queue_lock = threading.Lock()
@@ -22,7 +26,7 @@ stop_event = threading.Event()
 # ====================================================
 
 # ============= 本线程内访问的变量 ================
-# 我们在联调验收的时候，设置服务队列为3，等待队列为2，所以在这里就先行设置队列长度了。如果后续情况有变，可自行更改
+# 我们在联调验收的时候，设置服务队列为3，等待队列为2。如果后续情况有变，可自行更改
 serving_queue_size = int(bupt_hotel_config.room_per_layer * 0.6)
 serving_queue: Deque[ScheduleItem] = deque([], maxlen=serving_queue_size)
 
@@ -32,17 +36,9 @@ waiting_queue: Deque[ScheduleItem] = deque([], maxlen=waiting_queue_size)
 # 在step()的后面，决定要入库的消息都放到db_queue中
 db_queue: Deque[DBQueueItem] = deque([])
 
-# 定义全局变量 RoomServe，key是房间号，value是一个字典，记录房间的风速、温度，这个value字典的长度只能为2.
-ServedRooms: Dict[str, Dict[str, str]] = {}
+schedule_cache = ScheduleCache()
 
 # ====================================================
-
-def initialize_room_serve():
-    global ServedRooms
-    # 此处我们联合验收的时候，假设一共有5层楼，每一层楼5个房间，也就是101-105, 501-505
-    for i in range(1, bupt_hotel_config.hotel_layers + 1):
-        for j in range(1, bupt_hotel_config.room_per_layer + 1):
-            ServedRooms[f"{i}0{j}"] = {"temperature": 26, "speed": "medium"}  # 先置为初始默认状态
 
 # wrapper function, 避免主线程直接操作schedule_task_queue
 def add_task_to_queue(task: ScheduleTask):
@@ -69,11 +65,22 @@ async def step():
     with task_queue_lock:  # 加锁
         while len(schedule_task_queue) > 0:
             task = schedule_task_queue.popleft()  # 取出任务
+            op_type = task.op_type
+            if op_type == "speed":
+                pass    # 这里要么是开机，要么是改变风速，但是从数据入库的角度来说，都是一样的。
+                # 需要更改两个queue，也需要更新schedule_cache，还需要落到数据库里面去，这是最复杂的一种task
+                # 如果先前有风速，那就需要落到详单里面去。
+            elif op_type == "temperature":
+                pass    # 这里要么是开机，要么是寻常修改温度，但是从数据入库的角度来说，都是一样的。
+                # 需要更新schedule_cache，还需要落到数据库里面去。
+            elif op_type == "off":
+                pass    # 关机
+                # 需要更新schedule_cache，还需要更新详单。
+            else:
+                logger.error(f"unknown op_type: {op_type}")
             pass
 
 def scheduler_thread_func():
-    initialize_room_serve()
-
     # set event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

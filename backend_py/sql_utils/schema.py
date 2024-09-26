@@ -13,8 +13,8 @@ class User(Model):
 class Room(Model):
     room_number = fields.IntField(pk=True)
     status = fields.CharField(max_length=10)  # available, occupied
-    speed = fields.CharField(max_length=10)  # high, medium, low
-    temperature = fields.FloatField()
+    speed = fields.CharField(max_length=10, null=True)  # high, medium, low, 允许为空
+    temperature = fields.FloatField(null=True)  # 允许为空
 
 class DetailedRecord(Model):
     id = fields.IntField(pk=True)

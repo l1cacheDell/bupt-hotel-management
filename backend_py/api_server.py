@@ -29,7 +29,8 @@ from scheduler import (
     ScheduleTask,
     scheduler_thread_func,
     add_task_to_queue,
-    stop_event
+    stop_event,
+    schedule_cache
 )
 
 
@@ -100,14 +101,23 @@ async def checkout(request: CheckoutRequest):
             - 第二个是`房间表`更新状态为`available`。
 
     """
-    # TODO: 检查ServedRooms的状态
     client_name = request.client_name
     try:
         now_time = datetime.datetime.now()
-        await User.filter(name=client_name).update(check_out_time=now_time, bill=10086.0)   # TODO: 这里需要明算账
         usr = await User.filter(name=client_name).first()
         if usr is not None:
             room_number = usr.room_number
+            room_number_str = str(room_number)
+            isInCache = schedule_cache.has_room(room_number_str)
+            if isInCache:
+                schedule_cache.remove_room(room_number_str)
+            else:
+                logger.error(f"Room {room_number_str} not in cache. This operation may trigger unexpected behavior.")
+            
+            # TODO: 这里需要明算账
+            # TODO: 算账逻辑可能需要让ServedRooms数据结构更加复杂，可能要添加一个last_serve_time的字段。
+            bill = 10086.0
+            await User.filter(name=client_name).update(check_out_time=now_time, bill=bill)   
             await Room.filter(room_number=room_number).update(status='available')
             return {"status": "OK"}
         else:
@@ -119,7 +129,10 @@ async def checkout(request: CheckoutRequest):
 
 @app.post("/api/turn_on")
 async def turn_on(request: TurnOnRequest):
-    """不需要对数据库进行任何操作，只需要把这个房间放入ServedRooms里面、放入waiting_queue里面就行。
+    """需要对数据库进行任何操作，因为在初始化的时候，房间的温度、风速都是没有设置的
+        只需要把这个房间放入ServedRooms里面、放入waiting_queue里面就行。
+
+        其中，持久化到数据库、放入waiting_queue的逻辑，通过传递一个ScheduleTask来实现
 
     Args:
         request (TurnOnRequest): 成员变量：room_number，是哪个房间打开了空调
@@ -127,6 +140,31 @@ async def turn_on(request: TurnOnRequest):
     Returns:
         dict: status: OK
     """
+    room_number = request.room_number
+    room_number_str = str(room_number)
+    isInCache = schedule_cache.has_room(room_number_str)
+    if isInCache:
+        schedule_cache.remove_room(room_number_str)
+        schedule_cache.add_room(room_number_str)
+        logger.error(f"Room {room_number_str} already in cache. We removed it and add it again. This operation may trigger unexpected behavior.")
+    else:
+        schedule_cache.add_room(room_number_str)
+        logger.info(f"Room {room_number_str} added to cache.")
+
+    schedule_task_speed = ScheduleTask(
+        room_number=room_number,
+        op_type='speed',
+        op_value='medium'
+    )
+    schedule_task_temp = ScheduleTask(
+        room_number=room_number,
+        op_type='temperature',
+        op_value='26'
+    )
+
+    add_task_to_queue(schedule_task_speed)
+    add_task_to_queue(schedule_task_temp)
+
     return {"status": "OK"}
 
 @app.post("/api/turn_off")
@@ -140,6 +178,22 @@ async def turn_off(request: TurnOffRequest):
     Returns:
         dict: status: OK
     """
+    room_number = request.room_number
+    room_number_str = str(room_number)
+    isInCache = schedule_cache.has_room(room_number_str)
+    if isInCache:
+        schedule_cache.remove_room(room_number_str)
+        logger.info(f"Room {room_number_str} removed from cache.")
+    else:
+        logger.error(f"Room {room_number_str} not in cache. This operation may trigger unexpected behavior.")
+    
+    schedule_task_off = ScheduleTask(
+        room_number=room_number,
+        op_type='off',
+        op_value='null'
+    )
+    add_task_to_queue(schedule_task_off)
+
     return {"status": "OK"}
 
 @app.post("/api/set_temperature")

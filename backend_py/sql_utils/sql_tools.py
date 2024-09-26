@@ -24,9 +24,9 @@ async def init_db():
                 await Room.create(
                     room_number=room_number_int,   # int
                     status='available',            # 只有available和occupied两种状态 
-                    speed='medium',                # 只有low, medium, high三种速度
-                    temperature=26                 # 26摄氏度
-                )
+                    # speed='medium',                # 只有low, medium, high三种速度
+                    # temperature=26                 # 26摄氏度
+                )   # 在创建的时候，不设置风速、温度
 
 async def close_db():
     await Tortoise.close_connections()
