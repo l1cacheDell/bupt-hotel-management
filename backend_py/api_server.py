@@ -198,8 +198,12 @@ async def turn_off(request: TurnOffRequest):
 
 @app.post("/api/set_temperature")
 async def set_temperature(request: SetTemperatureRequest):
-    """想了半天，怎么模拟温度逐渐上升呢？所以这个路由函数，干脆就添加一个background task。就是逐渐去提高温度。
-        逐渐提高数据库，就是定时发送task，这个task去改变房间表的温度，就完事。
+    """发送一个Task给Scheduler，不需要进入详单，也不需要更新ServedRooms，注意，我们这里讨论的是空调温度。
+        至于室温怎么变动，不是我们关心的事情。
+
+        所以，比如说上一秒空调温度是26度，下一秒16度，也是可以办到的。
+
+        **我们只关心空调温度，不关心室温怎么变化。**
 
     Args:
         request (SetTemperatureRequest): 
@@ -209,11 +213,23 @@ async def set_temperature(request: SetTemperatureRequest):
     Returns:
         dict: status: OK
     """
+    room_number = request.room_number
+    target_temperature = request.temperature
+
+    schedule_task_temp = ScheduleTask(
+        room_number=room_number,
+        op_type='temperature',
+        op_value=str(target_temperature)
+    )
+
+    add_task_to_queue(schedule_task_temp)
+
     return {"status": "OK"}
 
 @app.post("/api/set_speed")
 async def set_speed(request: SetSpeedRequest):
     """封装一个task交给scheduler，让scheduler来处理。
+        注意，在这个地方scheduler是会更新详单的。
 
     Args:
         request (SetTemperatureRequest): 
@@ -223,16 +239,41 @@ async def set_speed(request: SetSpeedRequest):
     Returns:
         dict: status: OK
     """
+    room_number = request.room_number
+    target_speed = request.speed
+
+    schedule_task_speed = ScheduleTask(
+        room_number=room_number,
+        op_type='speed',
+        op_value=target_speed
+    )
+
+    add_task_to_queue(schedule_task_speed)
+
     return {"status": "OK"}
 
 @app.get("/api/query_room_info")
 async def query_room_info(request: QueryRoomInfoRequest):
     # 直接访问db
-    return {"status": "OK"}
+    room_number = request.room_number
+    room = await Room.filter(room_number=room_number).first()
+    if room is None:
+        return {"status": 404, "message": "Room not found."}
+    else:
+        temperature = await Room.filter(room_number=room_number).values('temperature').first()
+        speed = await Room.filter(room_number=room_number).values('speed').first()
+        # TODO: 还要查询账单的信息，因此每生成一条详单，就要在bill上面加一笔账。
+        # 这里只需要直接查询User的Bill就够了。
+        bill = 10086.0
+        return {"status": "OK", 
+                "temperature": temperature['temperature'], 
+                "speed": speed['speed'],
+                "bill": bill}
+
 
 @app.get("/api/query_schedule")
 async def query_schedule():
-    # 直接访问RoomServe
+    # 直接访问ServedRooms
     return {"status": "OK"}
 
 
