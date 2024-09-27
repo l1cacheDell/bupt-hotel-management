@@ -51,9 +51,6 @@ async def lifespan(app: FastAPI):
 
         logger.info("DB connection closed.")
         logger.info("Server stopped gracefully.")
-    
-
-
 
 app = FastAPI(lifespan=lifespan)
 
@@ -118,6 +115,11 @@ async def checkout(request: CheckoutRequest):
             # TODO: 算账逻辑可能需要让ServedRooms数据结构更加复杂，可能要添加一个last_serve_time的字段。
             bill = 10086.0
             await User.filter(name=client_name).update(check_out_time=now_time, bill=bill)   
+
+            # TODO: 需要检查房间的状态：speed和temperature必须去除，设置为空值
+
+            # TODO: 还需要从ServedRooms里面踢出这个房间，因为有可能在退房的时候，顾客根本就没有关空调，空调在退房之前都还是在serving状态。
+
             await Room.filter(room_number=room_number).update(status='available')
             return {"status": "OK"}
         else:
