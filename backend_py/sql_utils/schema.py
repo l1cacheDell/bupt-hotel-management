@@ -5,7 +5,7 @@ class User(Model):
     id = fields.IntField(pk=True, auto_increment=True)
     name = fields.CharField(max_length=255)
     identity_card = fields.CharField(max_length=18)
-    room_number = fields.ForeignKeyField('models.Room', related_name='users')
+    room_number = fields.IntField() # Not null
     check_in_time = fields.DatetimeField(auto_now_add=True)
     check_out_time = fields.DatetimeField(null=True)
     bill = fields.FloatField(null=True)

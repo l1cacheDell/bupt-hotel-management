@@ -11,18 +11,7 @@
 
 您目前正在：**backend Python分支**
 
-Dependency:
-
-```bash
-python -m venv hotel_venv
-
-# windows
-./hotel_venv/Scripts/activate
-# linux/macos
-source hotel_venv/bin/activate
-
-pip install tortoise-orm aiosqlite fastapi uvicorn
-```
+> 运行本代码的最低Python版本要求是**Python 3.10**，因为代码中使用到了`match ... case`, `asyncio`等语法。低于3.10的版本**无法运行**。
 
 # News
 
@@ -142,7 +131,7 @@ scheduler内部会动态维护几个数据结构：
 
 | 被维护的Data Structure |                             说明                             |
 | :--------------------: | :----------------------------------------------------------: |
-|     `ServedRooms`      | 哈希表，`key`是房间号，`value`是一个字典：房间的风速：`high`, `medium`, `low`三种状态。房间的温度：浮点数。 |
+|     `ServedRooms`      | 哈希表，`key`是房间号，`value`是一个字典：房间的风速：`high`, `medium`, `low`三种状态。房间的温度：浮点数。还有一个`last_operation_time`，记录上一次在风速上有变动的。 |
 |    `serving_queue`     |              当前轮到**应该提供送风**的房间队列              |
 |    `waiting_queue`     |                  当前**等待送风**的房间队列                  |
 |       `db_queue`       |    是一个自己用的小型queue。用来存放需要更新的房间信息。     |
@@ -215,6 +204,7 @@ def add_task_to_queue(task: ScheduleTask):
 
 
 
+
 两个线程讲解：
 
 + 主线程：负责接收来自外部的请求，这些请求全部都化为`ScheduleTask`对象，放入`schedule_task_queue`中。**不允许来自FastAPI的请求（也就是主线程）直接对数据库进行IO操作，因为这样没有经过schedule，会导致进入未知的状态。**
@@ -282,6 +272,21 @@ __案例__
 
 
 # 如何启动
+## 0. 创建环境
+
+在这里仅仅需要创建虚拟环境即可：
+
+
+```bash
+python -m venv hotel_venv
+
+# windows
+./hotel_venv/Scripts/activate
+# linux/macos
+source hotel_venv/bin/activate
+
+pip install tortoise-orm aiosqlite fastapi uvicorn loguru
+```
 
 ## 1. Python backend
 

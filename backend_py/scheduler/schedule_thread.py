@@ -44,6 +44,50 @@ schedule_cache = ScheduleCache()
 def add_task_to_queue(task: ScheduleTask):
     with task_queue_lock:  # 加锁
         schedule_task_queue.append(task)  # 添加任务到队列
+        
+def handle_task_queue():
+    # 除了打开
+    with task_queue_lock:  # 加锁
+        while len(schedule_task_queue) > 0:
+            task = schedule_task_queue.popleft()  # 取出任务
+            
+            room_number = task.room_number
+            op_type = task.op_type
+            op_value = task.op_value
+            
+            match op_type:
+                case "temperature": # 这是最简单的一种情况，所以先写
+                    # 1. 检查有没有开空调。如果没有就先开空调。
+                    # 判断的依据就是有没有在ServedRooms里面
+                    isInCache = schedule_cache.has_room(str(room_number))
+                    if not isInCache:
+                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed="medium", start_time=datetime.datetime.now()))
+                        schedule_cache.add_room(str(room_number))
+                    
+                    # 更新cache，直接更新数据库
+                    schedule_cache.update_temperature(str(room_number), op_value)   
+                    db_queue.append(DBQueueItem(room_number=room_number, op_type=op_type, op_value=op_value))
+                case "speed":
+                    # 检查有没有开空调，也就是在不在ServedRooms里面
+                    isInCache = schedule_cache.has_room(str(room_number))
+                    if not isInCache:
+                        # 加入队列
+                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed=op_value, start_time=datetime.datetime.now()))
+                        schedule_cache.add_room(str(room_number))
+                        # 这种情况，因为仅仅是开空调，所以不需要更新数据库
+                        continue
+                    
+                    # 对于持久化的逻辑，其实有一个关键点：任何一个ScheduleItem都会出队。而且它结算的时候，就是在出队的时候。
+                    # 不管是因为优先级下降，被挤到waiting_queue中了，还是因为临时改变了风速。反正只有在出队的时候才被结算。
+                    # 那么，我们的思路就是：先更新ServedRooms。然后在serving_queue队首的那个Item出队的时候，看看是否与ServedRooms
+                    # 里面记录的风速一不一致。在这个时候做统一更改。
+                    #
+                    # 在这里已经属于是在cache里面了，两个队列里面也肯定有。按照上面的思路，在这里就是修改ServedRooms里面的状态就完事。
+                    schedule_cache.update_speed(str(room_number), op_value)
+                case "off":
+                    pass
+                case _:
+                    logger.error(f"unknown op_type: {op_type}")
 
 def need_step() -> bool:
     """判断是否需要step，因为step的依据其实并不是每隔一秒钟、两秒钟。那如果我一个step()函数里面的内容，一秒钟之内完不成呢？第二次step的指令
@@ -62,23 +106,8 @@ def need_step() -> bool:
     return True
 
 async def step():
-    with task_queue_lock:  # 加锁
-        while len(schedule_task_queue) > 0:
-            task = schedule_task_queue.popleft()  # 取出任务
-            op_type = task.op_type
-            if op_type == "speed":
-                pass    # 这里要么是开机，要么是改变风速，但是从数据入库的角度来说，都是一样的。
-                # 需要更改两个queue，也需要更新schedule_cache，还需要落到数据库里面去，这是最复杂的一种task
-                # 如果先前有风速，那就需要落到详单里面去。
-            elif op_type == "temperature":
-                pass    # 这里要么是开机，要么是寻常修改温度，但是从数据入库的角度来说，都是一样的。
-                # 需要更新schedule_cache，还需要落到数据库里面去。
-            elif op_type == "off":
-                pass    # 关机
-                # 需要更新schedule_cache，还需要更新详单。
-            else:
-                logger.error(f"unknown op_type: {op_type}")
-            pass
+    handle_task_queue()
+                
 
 def scheduler_thread_func():
     # set event loop
@@ -90,6 +119,6 @@ def scheduler_thread_func():
         if signal:
             loop.run_until_complete(step())
         else:
-            loop.run_until_complete(asyncio.sleep(0.2)) # 避免CPU过于繁忙
+            loop.run_until_complete(asyncio.sleep(0.1)) # 避免CPU过于繁忙
 
     loop.close()

@@ -1,5 +1,8 @@
 from typing import Dict
 import threading
+import datetime
+
+from typing import Tuple
 
 # def initialize_room_serve():
 #     global ServedRooms
@@ -19,7 +22,7 @@ import threading
 # 考虑到封装与外部获取、交互的必要性，这里还是写一个类。避免直接暴露字典。
 class ScheduleCache:
     def __init__(self):
-        self.ServedRooms: Dict[str, Dict[str, str]] = {}
+        self.ServedRooms: Dict[str, Dict[str, str]] = {}    # key: room_number_str, value: {"temperature": str, "speed": str, "last_operation_time": datetime.datetime}
         self.lock = threading.Lock()
 
     def has_room(self, room_number_str: str) -> bool:
@@ -43,7 +46,7 @@ class ScheduleCache:
     def add_room(self, room_number_str: str) -> bool:
         with self.lock:
             if room_number_str not in self.ServedRooms:
-                self.ServedRooms[room_number_str] = {"temperature": '26', "speed": "medium"}    # NOTE: 一定是字符串！不要写数字。
+                self.ServedRooms[room_number_str] = {"temperature": '26', "speed": "medium", "last_operation_time": datetime.datetime.now()}    # NOTE: 一定是字符串！不要写数字。
                 return True
             else:
                 return False
@@ -55,4 +58,25 @@ class ScheduleCache:
                 return True
             else:
                 return False
+            
+    def update_temperature(self, room_number_str: str, temperature: str) -> bool:
+        # 更新温度，不需要改变last_operation_time
+        with self.lock:
+            if room_number_str in self.ServedRooms:
+                self.ServedRooms[room_number_str]["temperature"] = temperature
+                return True
+            else:
+                return False
+            
+    def update_speed(self, room_number_str: str, speed: str) -> Tuple[datetime.datetime, datetime.datetime]:
+        with self.lock:
+            if room_number_str in self.ServedRooms:
+                self.ServedRooms[room_number_str]["speed"] = speed
+                
+                now_time = datetime.datetime.now()
+                last_time = self.ServedRooms[room_number_str]["last_operation_time"]
+                self.ServedRooms[room_number_str]["last_operation_time"] = now_time
+                return (last_time, now_time)
+            else:
+                return (None, None)
         

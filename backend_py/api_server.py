@@ -68,17 +68,18 @@ async def checkin(request: CheckinRequest):
             3. 更新`房间表`，将该房间的状态设置为`occupied`。
     """
     client_name, client_id = request.client_name, request.client_id
-    next_available_room_number = await Room.filter(status='available').first()
-    if next_available_room_number is None:
+    next_available_room = await Room.filter(status='available').first()
+    if next_available_room is None:
         return {"status": 1024, "message": "No available room."}
     else:
         try:
+            next_available_room_number = next_available_room.room_number
             await User.create(name=client_name, identity_card=client_id, room_number=next_available_room_number)
-            await Room.filter(id=next_available_room_number).update(status='occupied')
-            return {"status": 200, "message": "Checkin success."}
+            await Room.filter(room_number=next_available_room_number).update(status='occupied')
+            return {"status": "OK", "allocate_room": next_available_room_number}
         except Exception as e:
             logger.error(f"Checkin failed: {e}")
-            return {"status": 500, "message": "Checkin failed."}
+            return {"status": "OK", "message": "Checkin failed."}
 
 @app.post("/api/checkout")
 async def checkout(request: CheckoutRequest):
@@ -119,6 +120,8 @@ async def checkout(request: CheckoutRequest):
             # TODO: 需要检查房间的状态：speed和temperature必须去除，设置为空值
 
             # TODO: 还需要从ServedRooms里面踢出这个房间，因为有可能在退房的时候，顾客根本就没有关空调，空调在退房之前都还是在serving状态。
+            
+            # 我觉得这里的做法，就是解耦合：发送一个请求给turn_off，不就完事了吗？
 
             await Room.filter(room_number=room_number).update(status='available')
             return {"status": "OK"}
@@ -280,4 +283,4 @@ async def query_schedule():
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=8000)
+    uvicorn.run(app, host='0.0.0.0', port=8080)
