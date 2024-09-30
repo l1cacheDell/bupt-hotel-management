@@ -266,12 +266,68 @@ __案例__
 
 整体调度的决策树是：
 
-![image1](./docs/决策树.png)
+![image1](./docs/决策树v2.0.png)
 
+这里要讲解一下具体的情况，也就是每一次step的逻辑树是怎样的：
 
+首先判断waiting_queue是否为空，因为没有的话，就直接在serving_queue中自行迭代就行：
++ 如果waiting_queue为空，serving_queue内部迭代即可。
++ 如果waiting_queue不为空，就需要判断serving_queue是否有空位：
+  + 如果serving_queue有空位，就**先**把waiting_queue的第一个元素放入serving_queue中，**然后**serving_queue内部迭代。注意这个先后顺序。
+  + 如果serving_queue不为空，就判断是否会发生抢占的情况：
+    + 如果waiting_queue中有元素的风速是高于serving_queue，或者等于的。这个时候就触发了swap条件。不过注意：不是立马swap的！要等到那个元素被step到了队首，才能进行swap。
+    + 如果waiting_queue中没有元素的风速优先级是高于serving_queue中元素的，就干等着，俗称`hunger`。
+
+可以举几个小例子说明：
+
+假设我们serving_queue的大小为3，waiting_queue的大小为2.
+
+__场景一：__
+
+queue: `[3] - [3] - [ ], [1] - [ ]`
+
+现在serving queue中有两个对象，还有一个slot空位，waiting_queue又有一个待serve的，这个时候直接进来就行。**但是需要注意的是：先让waiting_queue的元素先进来，然后再让serving_queue的元素进行step，这样可以保证数理上的和睦性。**
+
+那么一次step之后，queue变成：`[3] - [1] - [3], [ ] - [ ]`
+
+__场景二：__
+
+queue: `[3] - [2] - [3], [2] - [ ]`
+
+这个时候的情况，就是会发生swap了。也就是waiting_queue中的那个2与serving_queue中的那个2优先级是一样的，所以他们两个要进行挤占，轮流来。
+
+**但是并不是直接swap的，要等到serving_queue中的那个2被step到队首，即将出队的时候，才能进行swap。**
+
+那么按照这个逻辑推理，
+
+第一次step:
+
+queue: `[2] - [3] - [3], [2] - [ ]` 这个时候这个2还是没有进来，只是serving_queue自己在step。
+
+第二次step:
+
+queue: `[3] - [3] - [2], [2] - [ ]` 这个时候这个2已经进来了。waiting_queue里面的那个2是swap下来的。
+
+**为什么会这样？为什么不直接swap呢？**
+
+因为，我们step的逻辑是一次只在`serving_queue`里面出队一个、入队一个。并且我们只判断队首的元素到底去哪个队列。队首的元素只有两个去向：
+
++ waiting_queue中没有可替换的，就从serving_queue中出来，然后又append到serving_queue的队尾。
++ waiting_queue中有可替换的，就从serving_queue中出来，到waiting_queue里面去。
+
+这个逻辑的要点是：我们每次只对队首的元素进行判断。**至于在队列中间的，即便可以被swap，挤占，我们也不管，继续step它，直到它到了队首的时候，我们再对它进行考察。**
+
+这样做，是为了避免程序逻辑的复杂性。试想：如果在一次step中，要对不同情况进行判断，每一次step出入队的元素不止一个，那这样的情况就会非常复杂，也没有数理层面的和平性可言。并且调试难度极大、极有可能出现bug。
 
 
 # 如何启动
+## -1. 前言
+> **请严格按照：启动后端-启动前端-启动checkin的顺序执行。**
+
+这是因为，我们前端在启动的时候，会自动给后端发送请求，获取信息：到底有哪些房间，每个房间的情况怎么样？以便前端进行渲染那些grid、box等组件。
+
+如果先启动了前端，再启动的后端，那么可能会无法渲染，也就无法打开酒店管理面板。
+
 ## 0. 创建环境
 
 在这里仅仅需要创建虚拟环境即可：
@@ -288,47 +344,14 @@ source hotel_venv/bin/activate
 pip install tortoise-orm aiosqlite fastapi uvicorn loguru
 ```
 
-## 1. Python backend
+当然，也可以不创建，本来也没多大。直接安装这些组件完事。
 
-**请严格按照：启动后端-启动前端-启动checkin的顺序执行！！！！！**
-
-### 1.1 __后端启动：__
-
-后端部分的启动较为复杂，在启动之前，你需要先配置好你的数据库。
-
-
-
-__step 1: 修改账户与密码以适应你的配置__
-
-首先，你需要记住你的数据库连接的账户和密码。
-
-在这份代码中，本人的配置是用户名为root，密码为1234，这两个信息你需要在`backend/master.py`的：
-
-+ DATABASE_USER_NAME
-+ DATABASE_USER_PASSWORD
-
-更改为你自己的。
-
-
-
-__step 2: 创建一个空数据库db（或者叫schema）__
-
-```sql
-CREATE DATABASE backend;
-```
-
-这个空数据库的名字就叫`backend`。创建好了即可。
-
-
-
-__step 3: 启动server__
+## 1. Python backend启动方案
 
 ```bash
-cd backend
-python server.py
+cd backend_py
+python api_server.py
 ```
-
-注意：
 
 1. 启动之后，会自动对数据库进行一系列初始化，无需担心数据库的问题。
 2. 在启动过程中，遇到什么缺的包直接`pip install`即可。
@@ -337,7 +360,7 @@ python server.py
 
 ### 1.2 __前端启动：__
 
-**注意：在启动前端之前，必须先启动后端！！！**
+> **注意：在启动前端之前，必须先启动后端。原因见上方**
 
 ```bash
 cd frontend
@@ -395,14 +418,20 @@ python SE-TEST.py
   + 我的前端界面在各种八仙过海一般的前端界面中，勉强算是能看的，归功于`element-plus`提供的组件库，让我不用太考虑布局样式之类的，也能勉强看得顺眼。
   + 但是实际上如果肯花时间的话，这部分的美化工作一定是可以做的很好的。
 
-这一份作业真正开工到完工的时间也就两周。大家可以作为一份base，在这个基础上进行一系列魔改。
+选择Python语言作为后端，有很多不同的原因：
+
++ 有了`asyncio`的Python在IO方面有不错的效果，并不输于其他语言的速度。
++ 我们谈论`速度`，是一个很粗糙的概念。是CPU密集型的任务？还是IO密集型的任务？任务的Bottleneck到底在哪里？离开业务谈速度，完全就是扯淡。在`酒店管理系统`这个任务中，明显是一个IO密集型的场合，你用C++，golang，Java，甚至是JS，其实性能上根本拉不开差距。尤其是有了FastAPI这种框架，本人亲自试过，比我用C++写的后端还要快一点。我也不知道为什么，可能是我C++写得太菜了吧。不过在这个任务中，Python作为后端语言已经完全足够了。
++ 本人是AI专业的学生，用Python相对来说熟练度更高。
++ 本人非常讨厌OOP，也不知道为什么软件工程这门课程基本上是基于、面向OOP开设的。比起面向对象，我更倾向于函数式编程。这也是为什么我在这份文档中，屡次强调`数理上的和睦`，a software can be better if it reaches the harmony of mathematics.代码里面出现的`class`，都是我使用`pydantic`的`BaseModel`声明一个数据模型用的，用C++的话说，叫`结构体`。如果你也在寻找一份**函数式编程**、**非OOP**的bupt-hotel-management项目，这个项目应当是最佳实践。
+
+选择`tortoise-orm`作为ORM，有很多原因：
+
++ 早在2023-9的时候，这个项目就启动了，在架构选型的时候，我们选择的就是MySQL + 嵌入式sql。后来我发现这样的实践并不妥当。
++ 这个项目本身，是一个轻量级的项目，没有几个亿的数据，根本犯不着使用mysql，徒增烦恼，也增加debug心智，完全没有必要。就用sqlite就可以了。而且酒店管理系统即便是落到实践中，一天可能也就百来条数据入库出库，不用幻想什么高并发、高吞吐场景，都是多余的。这点小活sqlite完全够了，自己维护也方便。
++ 嵌入式sql语句有个问题，就是如果执行出错了，你没法做异常处理。当时因为我们不太明白这些工程实践上的道理，所以就在代码里面到处乱飚嵌入式的sql语句，有没有获取到数据？出错了怎么办？都是没有做异常处理的。我们先前的代码，您可以查阅`main`分支，那就是以前的代码。
++ `tortoise-orm` + `sqlite`，实验证明就是**best practice**。
 
 代码fork过去自己改都行，pr我也会看，甚至你直接抄过去也没问题。
 
-如果你觉得这份base code对你有帮助，请帮我点个star呜呜呜呜呜 QAQ
-
-
-
-# 写在最后面
-
-[![LICENSE](https://img.shields.io/badge/license-傻逼软件工程-blue.svg?style=flat-square)](https://zh.wikipedia.org/wiki/%E8%BD%AF%E4%BB%B6%E5%B7%A5%E7%A8%8B) [![LICENSE](https://img.shields.io/badge/license-傻逼肖登-orange.svg?style=flat-square)](https://github.com/SamuraiBUPT/bupt-hotel-management/blob/main/LICENSE) 
+如果你觉得这份base code对你有帮助，可否帮忙点个star，帮助更多的byr！
