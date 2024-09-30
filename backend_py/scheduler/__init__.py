@@ -1,2 +1,2 @@
-from scheduler.schedule_thread import scheduler_thread_func, stop_event, add_task_to_queue, schedule_cache
+from scheduler.schedule_thread import scheduler_thread_func, stop_event, add_task_to_queue, schedule_cache, query_serving_queue
 from scheduler.schedule_struct import ScheduleTask

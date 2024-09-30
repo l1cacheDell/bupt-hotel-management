@@ -21,6 +21,7 @@ from server_utils import (
 from sql_utils import (
     init_db,
     close_db,
+    summarize_bill,
     Room,
     User
 )
@@ -29,6 +30,7 @@ from scheduler import (
     ScheduleTask,
     scheduler_thread_func,
     add_task_to_queue,
+    query_serving_queue,
     stop_event,
     schedule_cache
 )
@@ -111,22 +113,23 @@ async def checkout(request: CheckoutRequest):
                 schedule_cache.remove_room(room_number_str)
             else:
                 logger.error(f"Room {room_number_str} not in cache. This operation may trigger unexpected behavior.")
+                
+            # 还需要从ServedRooms里面踢出这个房间，因为有可能在退房的时候，顾客根本就没有关空调，空调在退房之前都还是在serving状态。
+            # 这个off类型的任务，就会实现：移除ServedRooms、持久化到数据库
+            add_task_to_queue(ScheduleTask(room_number=room_number, op_type='off', op_value='null'))
+            await asyncio.sleep(1.5)
             
-            # TODO: 这里需要明算账
-            # TODO: 算账逻辑可能需要让ServedRooms数据结构更加复杂，可能要添加一个last_serve_time的字段。
-            bill = 10086.0
-            await User.filter(name=client_name).update(check_out_time=now_time, bill=bill)   
+            # 这里需要明算账
+            bill = await summarize_bill(room_number, client_name)
+            if bill != -1.0:
+                await User.filter(name=client_name).update(check_out_time=now_time, bill=bill)   
 
-            # TODO: 需要检查房间的状态：speed和temperature必须去除，设置为空值
-
-            # TODO: 还需要从ServedRooms里面踢出这个房间，因为有可能在退房的时候，顾客根本就没有关空调，空调在退房之前都还是在serving状态。
+            # 需要检查房间的状态：speed和temperature必须去除，设置为空值
+            await Room.filter(room_number=room_number).update(status='available', speed=None, temperature=None)
             
-            # 我觉得这里的做法，就是解耦合：发送一个请求给turn_off，不就完事了吗？
-
-            await Room.filter(room_number=room_number).update(status='available')
-            
-            # TODO: 要删除用户User表，以便下一次入住
-            return {"status": "OK"}
+            # 要删除用户User表，以便下一次入住
+            await User.filter(name=client_name).delete()
+            return {"status": "OK", "bill": bill}
         else:
             return {"status": 404, "message": "Client not found, please contact admin."}
     except Exception as e:
@@ -270,18 +273,23 @@ async def query_room_info(request: QueryRoomInfoRequest):
         temperature = await Room.filter(room_number=room_number).values('temperature').first()
         speed = await Room.filter(room_number=room_number).values('speed').first()
         # TODO: 还要查询账单的信息，因此每生成一条详单，就要在bill上面加一笔账。
-        # 这里只需要直接查询User的Bill就够了。
-        bill = 10086.0
-        return {"status": "OK", 
-                "temperature": temperature['temperature'], 
-                "speed": speed['speed'],
-                "bill": bill}
+        user = await User.filter(room_number=room_number).first()
+        if user:
+            user_name = user.name
+            bill = await summarize_bill(room_number, user_name)
+            return {"status": "OK", 
+                    "temperature": temperature['temperature'], 
+                    "speed": speed['speed'],
+                    "bill": bill}
+        else:
+            return {"status": 404, "message": "Client name not found."}
 
 
 @app.get("/api/query_schedule")
 async def query_schedule():
     # 直接访问ServedRooms
-    return {"status": "OK"}
+    serving_queue, waiting_queue = query_serving_queue(log_level="null")
+    return {"status": "OK", "serving_queue": serving_queue, "waiting_queue": waiting_queue}
 
 
 if __name__ == '__main__':

@@ -40,12 +40,56 @@ schedule_cache = ScheduleCache()
 
 # ====================================================
 
+last_step_time: datetime.datetime = None
+
+def query_serving_queue(log_level: str = "debug"):
+    global serving_queue, waiting_queue
+    served_rooms = [item.room_number for item in serving_queue]
+    waited_rooms = [item.room_number for item in waiting_queue]
+    if log_level == "debug":
+        logger.debug(f"Serving queue: {served_rooms}, Waiting queue: {waited_rooms}")
+    return served_rooms, waited_rooms
+        
+
 # wrapper function, 避免主线程直接操作schedule_task_queue
 def add_task_to_queue(task: ScheduleTask):
     with task_queue_lock:  # 加锁
         schedule_task_queue.append(task)  # 添加任务到队列
         
-def handle_task_queue():
+def update_item_status(schedule_item: ScheduleItem) -> ScheduleItem:
+    # 返回一个完备的ScheduleItem体，所有字段都不为空
+    global schedule_cache
+    schedule_item.end_time = datetime.datetime.now()
+        
+    current_speed = schedule_cache.get_room_speed(str(schedule_item.room_number))
+    schedule_item.last_speed = schedule_item.now_speed
+    if current_speed != schedule_item.now_speed:
+        schedule_item.now_speed = current_speed
+        
+    return schedule_item
+
+# 持久化到数据库中的函数
+# 主要是记录到DetailedRecord表中
+async def add_record(item: ScheduleItem):
+    serving_speed = item.last_speed
+    duration = item.end_time - item.start_time
+    room_number = item.room_number
+    
+    bill_rate = {"low": 0.1, "medium": 0.2, "high": 0.3}
+    
+    user = await User.filter(room_number=room_number).first()
+    if user:
+        user_name = user.name
+        await DetailedRecord.create(user_name=user_name, 
+                                    room_numbe=room_number,
+                                    serving_speed=serving_speed,
+                                    start_time=item.start_time,
+                                    end_time=item.end_time,
+                                    amount=(duration.total_seconds() / 60) * bill_rate[serving_speed])  # 60秒钟为单位计算
+    else:
+        logger.error(f"room_number: {room_number} not found in User table.")
+        
+async def handle_task_queue():
     global schedule_task_queue, schedule_cache, db_queue, waiting_queue, serving_queue
     # 除了打开
     with task_queue_lock:  # 加锁
@@ -66,7 +110,7 @@ def handle_task_queue():
                         schedule_cache.add_room(str(room_number))
                     
                     # 更新cache，并且直接更新数据库
-                    schedule_cache.update_temperature(str(room_number), op_value)   
+                    schedule_cache.update_temperature(str(room_number), op_value)
                     db_queue.append(DBQueueItem(room_number=room_number, op_type=op_type, op_value=op_value))
                 case "speed":
                     # 检查有没有开空调，也就是在不在ServedRooms里面
@@ -86,7 +130,33 @@ def handle_task_queue():
                     # 在这里已经属于是在cache里面了，两个队列里面也肯定有。按照上面的思路，在这里就是修改ServedRooms里面的状态就完事。
                     schedule_cache.update_speed(str(room_number), op_value)
                 case "off":
-                    pass
+                    # 从ServedRooms里面删除这个房间
+                    # 然后从两个queue里面找到这个房间，如果在serving queue里面，要持久化到数据库作为记录。waiting queue里面就直接移除
+                    isInCache = schedule_cache.has_room(str(room_number))
+                    if not isInCache:
+                        logger.error(f"Room {room_number} not in cache. This operation may trigger unexpected behavior.")
+                        continue
+                    
+                    schedule_cache.remove_room(str(room_number))
+                    
+                    removed = False
+                    for item in serving_queue:
+                        if item.room_number == room_number:
+                            # 结算这个item
+                            item.end_time = datetime.datetime.now()
+                            await add_record(item)
+                            serving_queue.remove(item)
+                            removed = True
+                            break
+                    
+                    if removed:
+                        continue
+                    
+                    for item in waiting_queue:
+                        if item.room_number == room_number:
+                            waiting_queue.remove(item)
+                            # 在这里，因为在它被落到waiting_queue之前，已经被持久化到数据库了，所以也没有必要再持久化一次，直接break了
+                            break
                 case _:
                     logger.error(f"unknown op_type: {op_type}")
 
@@ -103,40 +173,13 @@ def need_step() -> bool:
         不定时迭代，只要需要进行step，那就立即step，好处就是不会积压任务，因为只有上一次完成了下一次才会开始。坏处可能就是会导致送风不是那
         么规律，但是是可以接受的。
     """
-    global serving_queue, waiting_queue, db_queue
-    return True
-
-
-def update_item_status(schedule_item: ScheduleItem) -> ScheduleItem:
-    # 返回一个完备的ScheduleItem体，所有字段都不为空
-    global schedule_cache
-    schedule_item.end_time = datetime.datetime.now()
-        
-    current_speed = schedule_cache.get_room_speed(str(schedule_item.room_number))
-    schedule_item.last_speed = schedule_item.now_speed
-    if current_speed != schedule_item.now_speed:
-        schedule_item.now_speed = current_speed
-        
-    return schedule_item
-
-async def add_record(item: ScheduleItem):
-    serving_speed = item.last_speed
-    duration = item.end_time - item.start_time
-    room_number = item.room_number
-    
-    bill_rate = {"low": 0.1, "medium": 0.2, "high": 0.3}
-    
-    user = await User.filter(room_number=room_number).first()
-    if user:
-        user_name = user.name
-        await DetailedRecord.create(user_name=user_name, 
-                                    room_numbe=room_number,
-                                    serving_speed=serving_speed,
-                                    start_time=item.start_time,
-                                    end_time=item.end_time,
-                                    bill=(duration.total_seconds() / 60) * bill_rate[serving_speed])  # 60秒钟为单位计算
+    global serving_queue, waiting_queue, db_queue, last_step_time
+    now_time = datetime.datetime.now()
+    if (now_time - last_step_time).total_seconds() >= 1:
+        last_step_time = now_time
+        return True
     else:
-        logger.error(f"room_number: {room_number} not found in User table.")
+        return False
 
 async def step_queue():
     # 注意，下面这一堆逻辑，只为了搞懂两个点：
@@ -232,20 +275,25 @@ async def step_queue():
                 serving_queue.append(new_item)
 
 async def step():
-    handle_task_queue()
+    await handle_task_queue()
     await step_queue()
+    # 如果不想看，觉得太聒噪了，就把log_level改成"null"就行: query_serving_queue(log_level="null")
+    query_serving_queue(log_level="debug")
 
 
 def scheduler_thread_func():
+    global last_step_time
     # set event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    
+    last_step_time = datetime.datetime.now()
     
     while not stop_event.is_set():
         signal = need_step()
         if signal:
             loop.run_until_complete(step())
         else:
-            loop.run_until_complete(asyncio.sleep(0.1)) # 避免CPU过于繁忙
+            loop.run_until_complete(asyncio.sleep(0.2)) # 避免CPU过于繁忙
 
     loop.close()

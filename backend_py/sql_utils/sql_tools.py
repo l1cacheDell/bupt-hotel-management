@@ -1,8 +1,10 @@
 from tortoise import Tortoise
+from tortoise.functions import Sum
 
 from server_config import bupt_hotel_config
 from sql_utils.schema import (
-    Room
+    Room,
+    DetailedRecord
 )
 
 DATABASE_URL = "sqlite://hotel_management.db"
@@ -30,3 +32,10 @@ async def init_db():
 
 async def close_db():
     await Tortoise.close_connections()
+    
+    
+async def summarize_bill(room_number: int, client_name: str) -> float:
+    result = await DetailedRecord.filter(room_number=room_number, user_name=client_name).annotate(total_amount=Sum('amount')).first()
+    if result:
+        return result.total_amount
+    return -1.0
