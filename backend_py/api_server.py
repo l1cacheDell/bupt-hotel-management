@@ -124,6 +124,8 @@ async def checkout(request: CheckoutRequest):
             # 我觉得这里的做法，就是解耦合：发送一个请求给turn_off，不就完事了吗？
 
             await Room.filter(room_number=room_number).update(status='available')
+            
+            # TODO: 要删除用户User表，以便下一次入住
             return {"status": "OK"}
         else:
             return {"status": 404, "message": "Client not found, please contact admin."}

@@ -17,10 +17,10 @@ class Room(Model):
     temperature = fields.FloatField(null=True)  # 允许为空
 
 class DetailedRecord(Model):
-    id = fields.IntField(pk=True)
+    id = fields.IntField(pk=True, auto_increment=True)
     user_name = fields.CharField(max_length=255)
     room_number = fields.IntField()
-    operation_type = fields.CharField(max_length=10)  # high, medium, low
+    serving_speed = fields.CharField(max_length=10)  # high, medium, low
     start_time = fields.DatetimeField()
     end_time = fields.DatetimeField()
     amount = fields.FloatField()

@@ -14,8 +14,8 @@ from scheduler.schedule_struct import (
 )
 
 from server_config import bupt_hotel_config
-
 from scheduler.schedule_cache import ScheduleCache
+from sql_utils import DetailedRecord, User
 
 from loguru import logger
 
@@ -46,6 +46,7 @@ def add_task_to_queue(task: ScheduleTask):
         schedule_task_queue.append(task)  # 添加任务到队列
         
 def handle_task_queue():
+    global schedule_task_queue, schedule_cache, db_queue, waiting_queue, serving_queue
     # 除了打开
     with task_queue_lock:  # 加锁
         while len(schedule_task_queue) > 0:
@@ -61,10 +62,10 @@ def handle_task_queue():
                     # 判断的依据就是有没有在ServedRooms里面
                     isInCache = schedule_cache.has_room(str(room_number))
                     if not isInCache:
-                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed="medium", start_time=datetime.datetime.now()))
+                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed="medium")) # 还没开始serving，不能计时
                         schedule_cache.add_room(str(room_number))
                     
-                    # 更新cache，直接更新数据库
+                    # 更新cache，并且直接更新数据库
                     schedule_cache.update_temperature(str(room_number), op_value)   
                     db_queue.append(DBQueueItem(room_number=room_number, op_type=op_type, op_value=op_value))
                 case "speed":
@@ -72,7 +73,7 @@ def handle_task_queue():
                     isInCache = schedule_cache.has_room(str(room_number))
                     if not isInCache:
                         # 加入队列
-                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed=op_value, start_time=datetime.datetime.now()))
+                        waiting_queue.append(ScheduleItem(room_number=room_number, now_speed=op_value)) # 还没开始serving，不能计时
                         schedule_cache.add_room(str(room_number))
                         # 这种情况，因为仅仅是开空调，所以不需要更新数据库
                         continue
@@ -105,9 +106,135 @@ def need_step() -> bool:
     global serving_queue, waiting_queue, db_queue
     return True
 
+
+def update_item_status(schedule_item: ScheduleItem) -> ScheduleItem:
+    # 返回一个完备的ScheduleItem体，所有字段都不为空
+    global schedule_cache
+    schedule_item.end_time = datetime.datetime.now()
+        
+    current_speed = schedule_cache.get_room_speed(str(schedule_item.room_number))
+    schedule_item.last_speed = schedule_item.now_speed
+    if current_speed != schedule_item.now_speed:
+        schedule_item.now_speed = current_speed
+        
+    return schedule_item
+
+async def add_record(item: ScheduleItem):
+    serving_speed = item.last_speed
+    duration = item.end_time - item.start_time
+    room_number = item.room_number
+    
+    bill_rate = {"low": 0.1, "medium": 0.2, "high": 0.3}
+    
+    user = await User.filter(room_number=room_number).first()
+    if user:
+        user_name = user.name
+        await DetailedRecord.create(user_name=user_name, 
+                                    room_numbe=room_number,
+                                    serving_speed=serving_speed,
+                                    start_time=item.start_time,
+                                    end_time=item.end_time,
+                                    bill=(duration.total_seconds() / 60) * bill_rate[serving_speed])  # 60秒钟为单位计算
+    else:
+        logger.error(f"room_number: {room_number} not found in User table.")
+
+async def step_queue():
+    # 注意，下面这一堆逻辑，只为了搞懂两个点：
+    # 1. 加入serving_queue的是谁: 有可能是serving queue的队首，它出来了又进去；有可能是waiting queue的队首
+    # 2. 离开serving_queue的是serving queue的第一个元素，它到达哪里去？
+    
+    leaving_item: ScheduleItem = None
+    if len(serving_queue) == 0 and len(waiting_queue) == 0:
+        return  # 没意义，不迭代
+    
+    if len(waiting_queue) == 0 and len(serving_queue) > 0:
+        # 在serving_queue中迭代
+        leaving_item = serving_queue.popleft()
+        new_item = update_item_status(leaving_item)
+            
+        await add_record(new_item)
+        
+        # 更新元素时间，加入serving queue队尾
+        new_item.start_time = datetime.datetime.now()
+        new_item.end_time = None
+        serving_queue.append(leaving_item)
+    else:
+        if len(serving_queue) < serving_queue_size:
+            # 有空位，这种情况直接进来，从waiting_queue中取出一个元素，加入到serving_queue中
+            # 这种情况就是：1 - 1, 3
+            # 迭代之后就是：1 - 3 - 1, 1
+            # 先让waiting_queue的元素进来，然后再把serving queue原来的队头，放到队尾
+            
+            leaving_item = serving_queue.popleft()
+            new_item = update_item_status(leaving_item)
+            
+            # 结算离开的元素
+            await add_record(new_item)
+            
+            # 先不慌，先把waiting queue里面的元素拿进来
+            join_item = waiting_queue.popleft()
+            join_item.start_time = datetime.datetime.now()
+            serving_queue.append(join_item)
+            
+            
+            # 更新元素时间，加入serving queue队尾
+            new_item.start_time = datetime.datetime.now()
+            new_item.end_time = None
+            serving_queue.append(new_item)
+            
+        else:
+            # 检查waiting queue，如果队首元素的优先级比serving queue的队首元素的优先级高或者相同，那么就允许入队
+            # 比如：2 - 3 - 3, 3
+            # 迭代之后就是：3 - 3 - 3, 2
+            
+            # 但是如果是：3 - 3 - 1, 2
+            # 这个时候不能抢占式入队。因为1还处于刚刚加入serving queue的状态。要等到2轮过后，当1为队首的时候，才能把waiting queue的2加入进去
+            # 两轮之后：
+            # 1 - 3 - 3, 2
+            # 再过一轮：
+            # 3 - 3 - 2, 1
+            # 这样的逻辑有什么好处呢：避免强行插队。你不能说风速优先级高，当场就插队了，这是不利于维护系统和谐性的。在一次step中，从一个数理完备的逻辑来讲
+            # 最多同时只能有一个元素入队、出队。
+            # 如果你强行挤占，那么就会一次性出入队很多元素，自己搞不清楚，把问题复杂化了。
+            
+            # 还需要额外注意的是，只有这个条件分支是会发生挤占的情况。其他分支都不会发生serving queue与waiting queue元素互相挤占的情况。
+            # 其他两个条件分支，要么是waiting queue是空的，要么是serving queue有空位，都是直接加入就完事。
+            leaving_item = serving_queue.popleft()  # 老规矩，先出队队首元素
+            new_item = update_item_status(leaving_item) # 更新风速
+            # 现在就要决定这个new_item，到底是降落回waiting queue，还是插入到serving queue的队尾
+            speed_mapping = {
+                "low": 1,
+                "medium": 2,
+                "high": 3
+            }
+            if speed_mapping[waiting_queue[0].now_speed] >= speed_mapping[new_item.now_speed]:
+                # 这个时候，new_item要进入waiting_queue里面。waiting_queue的队首要进去serving_queue里面
+                inserted_item = waiting_queue.popleft()
+                inserted_item.start_time = datetime.datetime.now()
+                serving_queue.append(inserted_item)
+                
+                # 结算离开的元素
+                await add_record(new_item)
+                
+                # new_item重新, 加入waiting queue队尾
+                new_item.start_time = None
+                new_item.end_time = None
+                waiting_queue.append(new_item)
+            else:
+                # 不能发生置换，重新加入队尾
+                
+                # 结算离开的元素
+                await add_record(new_item)
+                
+                # 更新元素时间，加入serving queue队尾
+                new_item.start_time = datetime.datetime.now()
+                new_item.end_time = None
+                serving_queue.append(new_item)
+
 async def step():
     handle_task_queue()
-                
+    await step_queue()
+
 
 def scheduler_thread_func():
     # set event loop
