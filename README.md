@@ -1,4 +1,9 @@
 # bupt hotel management system
+
+<p align="center">
+    <a href="./README_EN.md">Read this in English</a>
+</p>
+
 波普特廉价酒店管理系统，北京邮电大学2023年秋季-软件工程-课程设计。
 
 > 用心做好一件事。
