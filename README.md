@@ -24,6 +24,87 @@
 + **[2024-04-11]** 新增golang后端，对协程提供更好的支持。
 + **[2023-12-17]** 完成Python后端的搭建，完成基于Vue的前端的初步搭建。
 
+# Quick Start
+## -1. 前言
+> **请严格按照：启动后端-启动前端-启动checkin的顺序执行。**
+
+这是因为，我们前端在启动的时候，会自动给后端发送请求，获取信息：到底有哪些房间，每个房间的情况怎么样？以便前端进行渲染那些grid、box等组件。
+
+如果先启动了前端，再启动的后端，那么可能会无法渲染，也就无法打开酒店管理面板。
+
+## 0. 创建环境
+
+在这里仅仅需要创建虚拟环境即可：
+
+
+```bash
+python -m venv hotel_venv
+
+# windows
+./hotel_venv/Scripts/activate
+# linux/macos
+source hotel_venv/bin/activate
+
+# 安装必要的包
+pip install tortoise-orm aiosqlite fastapi uvicorn loguru requests
+```
+
+## 1. Python backend启动方案
+
+```bash
+cd backend_py
+python api_server.py
+```
+
+1. 启动之后，会自动对数据库进行一系列初始化，无需担心数据库的问题。
+2. 在启动过程中，遇到什么缺的包直接`pip install`即可。
+
+
+
+### 1.2 __前端启动：__
+
+> **注意：在启动前端之前，必须先启动后端。原因见上方**
+
+```bash
+cd frontend
+npm run dev
+```
+
+**注意：** 你需要安装一些packages，这个可以通过`node.js`安装，遇到缺失的直接`npm install`就行。
+
+
+
+### 1.3 进行checkin
+
+为了方便，我们每次都是通过一份脚本进行checkin的，而不是手动去前端那里戳戳戳
+
+启动checkin脚本的指令：
+
+```bash
+cd tests
+python checkin.py
+```
+
+注意，一定要在启动后端之后，再执行checkin脚本。
+
+
+
+### 1.4 测试脚本
+
+为了验证我们的系统到底怎么样，我们有一份测试脚本。
+
+根据老师给出的样例，对服务器进行测试
+
+脚本启动指令:
+
+```bash
+cd tests
+python SE-TEST.py
+```
+
+之后会生成一份`result.xlsx`文件作为输出结果（如果运行顺利的话）
+
+
 # 技术栈详情
 + Vue3 (axios, element-plus)
 + Python backend: FastAPI + asyncio + Tortoise ORM
@@ -323,91 +404,6 @@ queue: `[3] - [3] - [2], [2] - [ ]` 这个时候这个2已经进来了。waiting
 这个逻辑的要点是：我们每次只对队首的元素进行判断。**至于在队列中间的，即便可以被swap，挤占，我们也不管，继续step它，直到它到了队首的时候，我们再对它进行考察。**
 
 这样做，是为了避免程序逻辑的复杂性。试想：如果在一次step中，要对不同情况进行判断，每一次step出入队的元素不止一个，那这样的情况就会非常复杂，也没有数理层面的和平性可言。并且调试难度极大、极有可能出现bug。
-
-
-# 如何启动
-## -1. 前言
-> **请严格按照：启动后端-启动前端-启动checkin的顺序执行。**
-
-这是因为，我们前端在启动的时候，会自动给后端发送请求，获取信息：到底有哪些房间，每个房间的情况怎么样？以便前端进行渲染那些grid、box等组件。
-
-如果先启动了前端，再启动的后端，那么可能会无法渲染，也就无法打开酒店管理面板。
-
-## 0. 创建环境
-
-在这里仅仅需要创建虚拟环境即可：
-
-
-```bash
-python -m venv hotel_venv
-
-# windows
-./hotel_venv/Scripts/activate
-# linux/macos
-source hotel_venv/bin/activate
-
-pip install tortoise-orm aiosqlite fastapi uvicorn loguru
-```
-
-当然，也可以不创建，本来也没多大。直接安装这些组件完事。
-
-## 1. Python backend启动方案
-
-```bash
-cd backend_py
-python api_server.py
-```
-
-1. 启动之后，会自动对数据库进行一系列初始化，无需担心数据库的问题。
-2. 在启动过程中，遇到什么缺的包直接`pip install`即可。
-
-
-
-### 1.2 __前端启动：__
-
-> **注意：在启动前端之前，必须先启动后端。原因见上方**
-
-```bash
-cd frontend
-npm run dev
-```
-
-**注意：** 你需要安装一些packages，这个可以通过`node.js`安装，遇到缺失的直接`npm install`就行。
-
-
-
-### 1.3 进行checkin
-
-为了方便，我们每次都是通过一份脚本进行checkin的，而不是手动去前端那里戳戳戳
-
-启动checkin脚本的指令：
-
-```bash
-cd tests
-python checkin.py
-```
-
-注意，一定要在启动后端之后，再执行checkin脚本。
-
-
-
-### 1.4 测试脚本
-
-为了验证我们的系统到底怎么样，我们有一份测试脚本。
-
-根据老师给出的样例，对服务器进行测试
-
-脚本启动指令:
-
-```bash
-cd tests
-python SE-TEST.py
-```
-
-之后会生成一份`result.xlsx`文件作为输出结果（如果运行顺利的话）
-
-
-
 
 
 # 写在后面

@@ -58,9 +58,13 @@ def add_task_to_queue(task: ScheduleTask):
         
 def update_item_status(schedule_item: ScheduleItem) -> ScheduleItem:
     # 返回一个完备的ScheduleItem体，所有字段都不为空
+    # 这个函数，主要是记录这个item的结束时间，同时更新它的速度。
+    
     global schedule_cache
     schedule_item.end_time = datetime.datetime.now()
         
+    # 速度是先在cache里面更新，然后才会波及到schedule item，所以在这里就是
+    # 做这样的操作，获取cache里面最新的speed，然后更新到item中。
     current_speed = schedule_cache.get_room_speed(str(schedule_item.room_number))
     schedule_item.last_speed = schedule_item.now_speed
     if current_speed != schedule_item.now_speed:
@@ -81,7 +85,7 @@ async def add_record(item: ScheduleItem):
     if user:
         user_name = user.name
         await DetailedRecord.create(user_name=user_name, 
-                                    room_numbe=room_number,
+                                    room_number=room_number,
                                     serving_speed=serving_speed,
                                     start_time=item.start_time,
                                     end_time=item.end_time,
@@ -95,6 +99,7 @@ async def handle_task_queue():
     with task_queue_lock:  # 加锁
         while len(schedule_task_queue) > 0:
             task = schedule_task_queue.popleft()  # 取出任务
+            logger.debug(f"Handling task: {task}")
             
             room_number = task.room_number
             op_type = task.op_type
@@ -134,11 +139,12 @@ async def handle_task_queue():
                     # 然后从两个queue里面找到这个房间，如果在serving queue里面，要持久化到数据库作为记录。waiting queue里面就直接移除
                     isInCache = schedule_cache.has_room(str(room_number))
                     if not isInCache:
-                        logger.error(f"Room {room_number} not in cache. This operation may trigger unexpected behavior.")
+                        logger.warning(f"Room {room_number} not in cache. This means the Air Conditioner is not on.")
                         continue
                     
                     schedule_cache.remove_room(str(room_number))
                     
+                    # removed flag，主要是看这个item是在serving queue里面还是waiting queue里面
                     removed = False
                     for item in serving_queue:
                         if item.room_number == room_number:
@@ -152,6 +158,7 @@ async def handle_task_queue():
                     if removed:
                         continue
                     
+                    # 到这里就说明serving queue里面没有，在waiting queue里面去寻找。
                     for item in waiting_queue:
                         if item.room_number == room_number:
                             waiting_queue.remove(item)
@@ -202,11 +209,16 @@ async def step_queue():
         new_item.end_time = None
         serving_queue.append(leaving_item)
     else:
-        if len(serving_queue) < serving_queue_size:
+        if len(waiting_queue) > 0 and len(serving_queue) == 0:
+            # 这种情况，就是waiting queue有元素，serving queue是空的
+            leaving_waiting_queue_item: ScheduleItem = waiting_queue.popleft()
+            leaving_waiting_queue_item.start_time = datetime.datetime.now()
+            serving_queue.append(leaving_waiting_queue_item)
+        elif len(serving_queue) < serving_queue_size and len(serving_queue) > 0:
             # 有空位，这种情况直接进来，从waiting_queue中取出一个元素，加入到serving_queue中
             # 这种情况就是：1 - 1, 3
             # 迭代之后就是：1 - 3 - 1, 1
-            # 先让waiting_queue的元素进来，然后再把serving queue原来的队头，放到队尾
+            # 理由：先让waiting_queue的元素进来，然后再把serving queue原来的队头，放到队尾
             
             leaving_item = serving_queue.popleft()
             new_item = update_item_status(leaving_item)

@@ -14,7 +14,7 @@ async def init_db():
         db_url=DATABASE_URL,
         modules={"models": ["sql_utils.schema"]}
     )
-    await Tortoise.generate_schemas()
+    await Tortoise.generate_schemas()   # 生成表结构
 
     # 初始化
     room_count = await Room.all().count()
@@ -36,6 +36,6 @@ async def close_db():
     
 async def summarize_bill(room_number: int, client_name: str) -> float:
     result = await DetailedRecord.filter(room_number=room_number, user_name=client_name).annotate(total_amount=Sum('amount')).first()
-    if result:
+    if result.total_amount:
         return result.total_amount
-    return -1.0
+    return 0    # 说明没消费，就是0元的空调费

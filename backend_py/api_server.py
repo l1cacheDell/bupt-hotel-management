@@ -38,7 +38,10 @@ from scheduler import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 初始化数据库
     await init_db()
+
+    # 初始化调度线程
     sche_thread = threading.Thread(target=scheduler_thread_func)
     sche_thread.start()
     logger.info("Scheduler thread started.")
@@ -72,7 +75,7 @@ async def checkin(request: CheckinRequest):
     client_name, client_id = request.client_name, request.client_id
     next_available_room = await Room.filter(status='available').first()
     if next_available_room is None:
-        return {"status": 1024, "message": "No available room."}
+        return {"status": "Failed", "message": "No available room."}
     else:
         try:
             next_available_room_number = next_available_room.room_number
@@ -112,7 +115,7 @@ async def checkout(request: CheckoutRequest):
             if isInCache:
                 schedule_cache.remove_room(room_number_str)
             else:
-                logger.error(f"Room {room_number_str} not in cache. This operation may trigger unexpected behavior.")
+                logger.warning(f"Room {room_number_str} not in cache. This means the Air Conditioner is not on.")
                 
             # 还需要从ServedRooms里面踢出这个房间，因为有可能在退房的时候，顾客根本就没有关空调，空调在退房之前都还是在serving状态。
             # 这个off类型的任务，就会实现：移除ServedRooms、持久化到数据库
@@ -155,25 +158,25 @@ async def turn_on(request: TurnOnRequest):
     isInCache = schedule_cache.has_room(room_number_str)
     if isInCache:
         schedule_cache.remove_room(room_number_str)
-        schedule_cache.add_room(room_number_str)
+        # schedule_cache.add_room(room_number_str)
         logger.error(f"Room {room_number_str} already in cache. We removed it and add it again. This operation may trigger unexpected behavior.")
     else:
-        schedule_cache.add_room(room_number_str)
+        # schedule_cache.add_room(room_number_str)
         logger.info(f"Room {room_number_str} added to cache.")
 
-    schedule_task_speed = ScheduleTask(
-        room_number=room_number,
-        op_type='speed',
-        op_value='medium'
-    )
+    # schedule_task_speed = ScheduleTask(
+    #     room_number=room_number,
+    #     op_type='speed',
+    #     op_value='medium'
+    # )
     schedule_task_temp = ScheduleTask(
         room_number=room_number,
         op_type='temperature',
         op_value='26'
     )
 
-    add_task_to_queue(schedule_task_speed)
-    add_task_to_queue(schedule_task_temp)
+    # add_task_to_queue(schedule_task_speed)
+    add_task_to_queue(schedule_task_temp)   # 只需要添加温度即可。
 
     return {"status": "OK"}
 
@@ -192,7 +195,7 @@ async def turn_off(request: TurnOffRequest):
     room_number_str = str(room_number)
     isInCache = schedule_cache.has_room(room_number_str)
     if isInCache:
-        schedule_cache.remove_room(room_number_str)
+        # schedule_cache.remove_room(room_number_str)
         logger.info(f"Room {room_number_str} removed from cache.")
     else:
         logger.error(f"Room {room_number_str} not in cache. This operation may trigger unexpected behavior.")
