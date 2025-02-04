@@ -60,7 +60,7 @@ So with such a weird demand, we can only try our best to meet it.
 
 Therefore, when we set up cross-group joint debugging in the software engineering class (multiple different groups send request tests to each other), we defined a set of common and public interfaces to ensure that multiple groups can successfully complete joint debugging and process interfaces:
 
-https://apifox.com/apidoc/shared-14253c1e-942e-4899-a2ce-56f935bf571a
+https://apifox.com/apidoc/shared-6ddc4cb2-8aa9-4950-8436-31a0314b383a
 
 In this interface document, we did not define some database query interfaces or our own front-end and back-end interfaces (we believe that these can be determined by the group itself and do not belong to public joint debugging content). We only defined general interfaces that everyone must meet.
 

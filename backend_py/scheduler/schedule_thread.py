@@ -15,7 +15,7 @@ from scheduler.schedule_struct import (
 
 from server_config import bupt_hotel_config
 from scheduler.schedule_cache import ScheduleCache
-from sql_utils import DetailedRecord, User
+from sql_utils import DetailedRecord, User, Room
 
 from loguru import logger
 
@@ -113,6 +113,8 @@ async def handle_task_queue():
                     if not isInCache:
                         waiting_queue.append(ScheduleItem(room_number=room_number, now_speed="medium")) # 还没开始serving，不能计时
                         schedule_cache.add_room(str(room_number))
+                        db_queue.append(DBQueueItem(room_number=room_number, op_type='temperature', op_value='26'))
+                        db_queue.append(DBQueueItem(room_number=room_number, op_type='speed', op_value='medium'))
                     
                     # 更新cache，并且直接更新数据库
                     schedule_cache.update_temperature(str(room_number), op_value)
@@ -124,7 +126,8 @@ async def handle_task_queue():
                         # 加入队列
                         waiting_queue.append(ScheduleItem(room_number=room_number, now_speed=op_value)) # 还没开始serving，不能计时
                         schedule_cache.add_room(str(room_number))
-                        # 这种情况，因为仅仅是开空调，所以不需要更新数据库
+                        # 这种情况，因为仅仅是开空调，所以不需要更新数据库的详单表，但是room表还是要更新的。
+                        db_queue.append(DBQueueItem(room_number=room_number, op_type=op_type, op_value='medium'))
                         continue
                     
                     # 对于持久化的逻辑，其实有一个关键点：任何一个ScheduleItem都会出队。而且它结算的时候，就是在出队的时候。
@@ -134,6 +137,7 @@ async def handle_task_queue():
                     #
                     # 在这里已经属于是在cache里面了，两个队列里面也肯定有。按照上面的思路，在这里就是修改ServedRooms里面的状态就完事。
                     schedule_cache.update_speed(str(room_number), op_value)
+                    db_queue.append(DBQueueItem(room_number=room_number, op_type=op_type, op_value=op_value))
                 case "off":
                     # 从ServedRooms里面删除这个房间
                     # 然后从两个queue里面找到这个房间，如果在serving queue里面，要持久化到数据库作为记录。waiting queue里面就直接移除
@@ -143,6 +147,8 @@ async def handle_task_queue():
                         continue
                     
                     schedule_cache.remove_room(str(room_number))
+                    db_queue.append(DBQueueItem(room_number=room_number, op_type='temperature', op_value='off'))
+                    db_queue.append(DBQueueItem(room_number=room_number, op_type='speed', op_value='off'))
                     
                     # removed flag，主要是看这个item是在serving queue里面还是waiting queue里面
                     removed = False
@@ -162,7 +168,7 @@ async def handle_task_queue():
                     for item in waiting_queue:
                         if item.room_number == room_number:
                             waiting_queue.remove(item)
-                            # 在这里，因为在它被落到waiting_queue之前，已经被持久化到数据库了，所以也没有必要再持久化一次，直接break了
+                            # 在这里，因为在它被落到waiting_queue之前，已经被持久化到数据库详单了
                             break
                 case _:
                     logger.error(f"unknown op_type: {op_type}")
@@ -188,7 +194,7 @@ def need_step() -> bool:
     else:
         return False
 
-async def step_queue():
+async def step_serving_queue():
     # 注意，下面这一堆逻辑，只为了搞懂两个点：
     # 1. 加入serving_queue的是谁: 有可能是serving queue的队首，它出来了又进去；有可能是waiting queue的队首
     # 2. 离开serving_queue的是serving queue的第一个元素，它到达哪里去？
@@ -286,9 +292,32 @@ async def step_queue():
                 new_item.end_time = None
                 serving_queue.append(new_item)
 
+
+async def step_db_queue():
+    global db_queue
+    while len(db_queue) > 0:
+        item: DBQueueItem = db_queue.popleft()
+        logger.debug(f"Handling db_queue item: {item}")
+        match item.op_type:
+            case "temperature":
+                if item.op_value is not None:
+                    try:
+                        await Room.filter(room_number=item.room_number).update(temperature=0)
+                    except:
+                        logger.error(f"Failed to update temperature of room {item.room_number} to {item.op_value}")
+            case "speed":
+                if item.op_value is not None:
+                    try:
+                        await Room.filter(room_number=item.room_number).update(speed=item.op_value)
+                    except:
+                        logger.error(f"Failed to update speed of room {item.room_number} to {item.op_value}")
+            case _:
+                logger.error(f"unknown op_type: {item.op_type}")
+
 async def step():
     await handle_task_queue()
-    await step_queue()
+    await step_serving_queue()
+    await step_db_queue()
     # 如果不想看，觉得太聒噪了，就把log_level改成"null"就行: query_serving_queue(log_level="null")
     query_serving_queue(log_level="debug")
 

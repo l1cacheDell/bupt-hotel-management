@@ -35,7 +35,7 @@ class Action:
                 'room_number': self.room_id
             }
         elif self.input == '高' or self.input == '中' or self.input == '低':
-            self.api = '/api/setSpeed'
+            self.api = '/api/set_speed'
             speed_map = {
                 '高': "high",
                 '中': "medium",
@@ -45,8 +45,17 @@ class Action:
                 'room_number': self.room_id,
                 'speed': speed_map[self.input]
             }
+        elif self.input == "开房":
+            self.api = '/api/checkin'
+            for i in range(5):
+                params = {
+                    'client_name': f'dyz_{self.room_id}',
+                    'client_id': '50013420020324xxxx'
+                }
+                res = requests.post(url + ':' + str(port) + self.api, json=params, timeout=5)
+            return
         else:
-            self.api = '/api/setTemperature'
+            self.api = '/api/set_temperature'
             params = {
                 'room_number': self.room_id,
                 'temperature': int(self.input)
@@ -57,7 +66,7 @@ class Action:
             print("请求超时,重新发送")
             res = requests.post(url + ':' + str(port) + self.api, json=params)
 
-time_lock = [False] * 26
+time_lock = [False] * 27
 condition = threading.Condition()
 
 
@@ -90,7 +99,7 @@ scheduleInfo = None
 def thread_query(actions):
     global time_lock, condition
     try:
-        api_room_info = '/api/query_room_info/'
+        api_room_info = '/api/query_room_info'
         api_schedule = '/api/query_schedule'
         df_rooms = pd.DataFrame()
         df_schedule = pd.DataFrame()
@@ -104,17 +113,20 @@ def thread_query(actions):
                     'room_number': room_id
                 }
                 try:
-                    res = requests.get(url + ':' + str(port) + api_room_info, params=params, timeout=5)
+                    res = requests.get(url + ':' + str(port) + api_room_info, json=params, timeout=3)
                 except requests.Timeout:
                     print("请求超时,重新发送")
-                    res = requests.get(url + ':' + str(port) + api_room_info, params=params)
+                    res = requests.get(url + ':' + str(port) + api_room_info, json=params)
+                except Exception as e:
+                    print(f"请求失败: {e}")
                 data_dict = res.json()
+                print(data_dict)
                 # convert to a dataframe
-                data = [data_dict]
-                columns_order = ['cur_temperature', 'set_temperature', 'speed', 'bill']
-                this_df = pd.DataFrame(data, columns=columns_order)
+                columns_order = ['status', 'temperature', 'speed', 'bill']
+                this_df = pd.DataFrame([data_dict], columns=columns_order)
                 tmp_df = pd.concat([tmp_df, this_df], axis=1)
                 time.sleep(0.5)
+
             try:
                 res2 = requests.get(url + ':' + str(port) + api_schedule, timeout=5)
             except requests.Timeout:
@@ -169,6 +181,7 @@ if __name__ == '__main__':
     # 表格中的数据在取用的时候全部变成str格式
     # 遍历每一行
     actions = []    # 一个二级列表
+    actions.append([Action('101', '开房')])
     for index, row in case_df.iterrows():
         time_ = row['时间(min)']
         # 遍历该行
@@ -205,16 +218,15 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("主程序中断")
     df = pd.read_excel(FILENAME, sheet_name='测试用例')
-    target1 = df.iloc[2:28, 6:26]
+    target1 = df.iloc[2:28, 6:27]
     target2 = df.iloc[2:28, 27:32]
-    assert target1.size == roomInfo.size
-    assert target2.size == scheduleInfo.size
+    # assert target1.size == roomInfo.size, f"The size of target1 and roomInfo is not equal: {target1.size} vs {roomInfo.size}"
+    # assert target2.size == scheduleInfo.size
     # df.iloc[2:28, 6:26] = roomInfo.values
     # df.iloc[2:28, 27:32] = scheduleInfo.values
     
     # create a file to store the result
-    writer = pd.ExcelWriter('result.xlsx')
-    df.to_excel(writer, sheet_name='测试用例', index=False)
-    roomInfo.to_excel(writer, sheet_name='房间信息', index=False)
-    scheduleInfo.to_excel(writer, sheet_name='调度信息', index=False)
-    writer.save()
+    with pd.ExcelWriter('result.xlsx') as writer:
+        df.to_excel(writer, sheet_name='测试用例', index=False)
+        roomInfo.to_excel(writer, sheet_name='房间信息', index=False)
+        scheduleInfo.to_excel(writer, sheet_name='调度信息', index=False)

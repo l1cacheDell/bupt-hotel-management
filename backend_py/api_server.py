@@ -273,16 +273,22 @@ async def query_room_info(request: QueryRoomInfoRequest):
     if room is None:
         return {"status": 404, "message": "Room not found."}
     else:
-        temperature = await Room.filter(room_number=room_number).values('temperature').first()
-        speed = await Room.filter(room_number=room_number).values('speed').first()
+        temperature = await Room.filter(room_number=room_number).values('temperature')
+        temperature = temperature[0]['temperature']
+        speed = await Room.filter(room_number=room_number).values('speed')
+        speed = speed[0]['speed']
         # TODO: 还要查询账单的信息，因此每生成一条详单，就要在bill上面加一笔账。
         user = await User.filter(room_number=room_number).first()
         if user:
             user_name = user.name
             bill = await summarize_bill(room_number, user_name)
+            if temperature is None:
+                temperature = "N/A"
+            if speed is None:
+                speed = "N/A"
             return {"status": "OK", 
-                    "temperature": temperature['temperature'], 
-                    "speed": speed['speed'],
+                    "temperature": temperature, 
+                    "speed": speed,
                     "bill": bill}
         else:
             return {"status": 404, "message": "Client name not found."}
